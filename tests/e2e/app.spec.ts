@@ -1,3 +1,4 @@
+import { telegram } from "./telegram";
 import { expect, test, type Page } from "@playwright/test";
 async function nav(page: Page, label: string) {
   await page
@@ -29,13 +30,15 @@ test("демо: профиль, PPL, рабочие веса, график и с
   await page.getByLabel("Упражнение 1", { exact: true }).fill("Жим тест");
   await page.getByRole("button", { name: "Сохранить программу" }).click();
   await expect(page.getByRole("status")).toContainText("Сохранено");
+  await page.getByRole("button", { name: /Жим тест/ }).click();
   await expect(page.getByRole("heading", { name: "Жим тест" })).toBeVisible();
-  await page.getByLabel("Жим тест, подход 1, вес", { exact: true }).fill("60");
+  await page.getByLabel("Вес, кг", { exact: true }).fill("60");
+  await page.getByLabel("Повторения", { exact: true }).fill("8");
   await page
-    .getByLabel("Жим тест, подход 1, повторы", { exact: true })
-    .fill("8");
-  await page.getByRole("button", { name: "Сохранить тренировку" }).click();
+    .getByRole("button", { name: "Записать подход", exact: true })
+    .click();
   await expect(page.getByRole("status")).toContainText("Сохранено");
+  await page.getByRole("button", { name: "← Назад к программе" }).click();
   await nav(page, "Прогресс");
   await page.getByLabel("Дата замера").fill("2026-10-01");
   await page.getByLabel("Масса, кг").fill("80");
@@ -47,7 +50,9 @@ test("демо: профиль, PPL, рабочие веса, график и с
   await expect(page.getByRole("img", { name: /График массы/ })).toBeVisible();
   await expect(page.getByText("80.5 кг", { exact: true })).toBeVisible();
   await page.locator("details.history summary").click();
-  await expect(page.getByText("1: 60 кг × 8", { exact: false })).toBeVisible();
+  await expect(
+    page.getByText("Жим тест: 60 кг × 8", { exact: false }),
+  ).toBeVisible();
   await page.reload();
   await nav(page, "Прогресс");
   await expect(page.getByRole("img", { name: /График массы/ })).toBeVisible();
@@ -67,67 +72,6 @@ test("демо: профиль, PPL, рабочие веса, график и с
     fullPage: true,
   });
 });
-// Mock the native bridge, exercising the real bundled Telegram SDK rather than a replaced repository.
-async function telegram(page: Page, failSave = false) {
-  await page.addInitScript(
-    ({ failSave }) => {
-      const w = window as unknown as {
-        TelegramWebviewProxy: unknown;
-        Telegram: {
-          WebView: { receiveEvent: (event: string, data: unknown) => void };
-        };
-        __cloud: Record<string, string>;
-      };
-      w.__cloud = {};
-      w.TelegramWebviewProxy = {
-        postEvent(event: string, payload: string) {
-          if (event !== "web_app_invoke_custom_method") return;
-          const data = JSON.parse(payload);
-          let result: unknown;
-          let error: string | undefined;
-          const p = data.params;
-          if (data.method === "getStorageKeys") result = Object.keys(w.__cloud);
-          else if (data.method === "getStorageValues")
-            result = Object.fromEntries(
-              p.keys.map((k: string) => [k, w.__cloud[k] || ""]),
-            );
-          else if (data.method === "saveStorageValue") {
-            if (failSave) error = "offline";
-            else {
-              w.__cloud[p.key] = p.value;
-              result = true;
-            }
-          } else if (data.method === "deleteStorageValues") {
-            for (const k of p.keys) delete w.__cloud[k];
-            result = true;
-          }
-          setTimeout(
-            () =>
-              w.Telegram.WebView.receiveEvent("custom_method_invoked", {
-                req_id: data.req_id,
-                result,
-                error,
-              }),
-            0,
-          );
-        },
-      };
-    },
-    { failSave },
-  );
-  await page.goto(
-    "./#tgWebAppVersion=8.0&tgWebAppPlatform=android&tgWebAppData=" +
-      encodeURIComponent(
-        "user=" +
-          encodeURIComponent('{"id":123,"first_name":"Тест"}') +
-          "&auth_date=1&hash=test",
-      ) +
-      "&tgWebAppThemeParams=" +
-      encodeURIComponent(
-        '{"bg_color":"#111111","text_color":"#eeeeee","button_color":"#d0ef8c","button_text_color":"#111111","secondary_bg_color":"#222222","hint_color":"#aaaaaa"}',
-      ),
-  );
-}
 test("Telegram SDK: CloudStorage, темы и отсутствие локального fallback", async ({
   page,
 }) => {
@@ -189,16 +133,13 @@ test("темы, reduced motion и desktop", async ({ page }) => {
     page.getByRole("heading", { name: "Становись сильнее" }),
   ).toBeVisible();
   await nav(page, "Тренировки");
-  await page
-    .locator("details.exercise-card")
-    .first()
-    .locator("summary")
-    .click();
-  await expect(page.getByRole("img", { name: "Схема: Грудь" })).toBeVisible();
+  await page.getByRole("button", { name: /Жим штанги лёжа/ }).click();
+  await expect(
+    page.getByRole("img", { name: "Авторская схема мышц: Грудь" }),
+  ).toBeVisible();
   expect(
     await page
-      .locator(".muscle.active")
-      .first()
+      .locator(".exercise-screen")
       .evaluate((e) => getComputedStyle(e).animationName),
   ).toBe("none");
   await page.screenshot({
@@ -272,4 +213,38 @@ test("повреждённая локальная запись сохраняе�
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Экспорт JSON" }).click();
   expect((await download).suggestedFilename()).toMatch(/^fitness-.*\.json$/);
+});
+
+test("Telegram: дневник питания сохраняет порцию в CloudStorage без localStorage", async ({
+  page,
+}) => {
+  await telegram(page);
+  await nav(page, "Питание");
+  await page.getByLabel("Название продукта").fill("Рис");
+  await page.getByLabel("Масса порции, г").fill("200");
+  await page.getByLabel("Ккал на 100 г").fill("130");
+  await page.getByRole("button", { name: "Сохранить продукт" }).click();
+  await expect(page.getByRole("status")).toContainText("Сохранено");
+  expect(await page.evaluate(() => localStorage.length)).toBe(0);
+  const records = await page.evaluate(() =>
+    Object.entries(
+      (window as unknown as { __cloud: Record<string, string> }).__cloud,
+    ),
+  );
+  expect(records).toHaveLength(1);
+  expect(records[0][0]).toMatch(/^fit_v1_food_/);
+  expect(JSON.parse(records[0][1]).foods[0].grams).toBe(200);
+});
+
+test("Telegram: ошибка записи питания сохраняет форму и не сообщает успех", async ({
+  page,
+}) => {
+  await telegram(page, true);
+  await nav(page, "Питание");
+  await page.getByLabel("Название продукта").fill("Рис");
+  await page.getByRole("button", { name: "Сохранить продукт" }).click();
+  await expect(page.getByRole("alert")).toContainText("CloudStorage");
+  await expect(page.getByLabel("Название продукта")).toHaveValue("Рис");
+  await expect(page.getByText("Сохранено", { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.length)).toBe(0);
 });

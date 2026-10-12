@@ -1,12 +1,15 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
-  defaultProfile,
-  initialPlan,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
+import {
   muscles,
   nutrition,
   planSchema,
   profileSchema,
-  sessionSchema,
   today,
   volume,
   weightSchema,
@@ -16,14 +19,17 @@ import {
   type Muscle,
   type Plan,
   type Profile,
-  type Session,
 } from "./domain";
 import { createRepository, haptic, initTelegram } from "./telegram";
+import { NutritionDiary } from "./NutritionDiary";
+import { ExerciseScreen, MuscleDiagram, type Draft } from "./ExerciseScreen";
+import { catalog, ranges } from "./catalog";
+import { archivedExercises, analysis, scheduleSchema } from "./journal";
 import { Repository } from "./storage";
-type Tab = "Сегодня" | "Тренировки" | "Прогресс" | "Профиль";
+type Tab = "Сегодня" | "Тренировки" | "Прогресс" | "Профиль" | "Питание";
 type Save = (action: (repo: Repository) => Promise<void>) => Promise<boolean>;
-const tabs: Tab[] = ["Сегодня", "Тренировки", "Прогресс", "Профиль"];
-const icons = ["◉", "↗", "▥", "◎"];
+const tabs: Tab[] = ["Сегодня", "Тренировки", "Питание", "Прогресс", "Профиль"];
+const icons = ["◉", "↗", "◌", "▥", "◎"];
 const dateText = (d: string) =>
   new Date(d + "T12:00:00").toLocaleDateString("ru-RU", {
     day: "numeric",
@@ -38,70 +44,6 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     </label>
   );
 }
-function MuscleMap({ muscle }: { muscle: Muscle }) {
-  const active = (m: Muscle) => (m === muscle ? "muscle active" : "muscle");
-  return (
-    <svg
-      className="muscle-map"
-      viewBox="0 0 160 190"
-      role="img"
-      aria-label={`Схема: ${muscles[muscle]}`}
-    >
-      <circle cx="80" cy="22" r="15" className="body" />
-      <path
-        d="M65 42 L95 42 L111 61 L104 114 L98 129 L62 129 L56 114 L49 61 Z"
-        className="body"
-      />
-      <path
-        d="M61 48 L77 48 L77 73 L60 69 Z M83 48 L99 48 L100 69 L83 73 Z"
-        className={active("chest")}
-      />
-      <path
-        d="M62 77 L76 80 L76 108 L65 111 Z M84 80 L98 77 L95 111 L84 108 Z"
-        className={active("back")}
-      />
-      <path
-        d="M49 47 L61 46 L58 67 L44 67 Z M99 46 L111 47 L116 67 L102 67 Z"
-        className={active("shoulders")}
-      />
-      <path
-        d="M43 71 L56 72 L47 113 L35 110 Z M104 72 L117 71 L125 110 L113 113 Z"
-        className={active("arms")}
-      />
-      <path
-        d="M62 132 L77 132 L73 181 L59 181 Z M83 132 L98 132 L101 181 L87 181 Z"
-        className={active("legs")}
-      />
-    </svg>
-  );
-}
-function ExerciseCard({ exercise }: { exercise: Exercise }) {
-  return (
-    <details className="exercise-card">
-      <summary>
-        <span className="exercise-mark">↗</span>
-        <span>
-          <strong>{exercise.name}</strong>
-          <small>
-            {muscles[exercise.muscle]} · {exercise.sets} × {exercise.reps}
-          </small>
-        </span>
-        <span className="expand">+</span>
-      </summary>
-      <div className="exercise-detail">
-        <MuscleMap muscle={exercise.muscle} />
-        <div>
-          <h3>{muscles[exercise.muscle]}</h3>
-          <p>{exercise.cue}</p>
-          <small>
-            Условная авторская схема групп мышц, не инструкция техники. Спина
-            показана условно на той же схеме. При боли остановитесь.
-          </small>
-        </div>
-      </div>
-    </details>
-  );
-}
 export function App() {
   const [context, setContext] = useState<{
     repo: Repository;
@@ -111,11 +53,31 @@ export function App() {
   const [tab, setTab] = useState<Tab>("Сегодня");
   const [day, setDay] = useState<Day>("Push");
   const [busy, setBusy] = useState(false);
+  const saving = useRef(false);
   const [blocked, setBlocked] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editingPlan, setEditingPlan] = useState(false);
-  const [sessionVersion, setSessionVersion] = useState(0);
+  const [selected, setSelected] = useState<Exercise>();
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const closeExercise = () => {
+    setSelected(undefined);
+    setTab("Тренировки");
+  };
+  useEffect(() => {
+    const pop = () => closeExercise();
+    window.addEventListener("popstate", pop);
+    return () => window.removeEventListener("popstate", pop);
+  }, []);
+  const back = () => {
+    if (history.state?.fitnessExercise) history.back();
+    else closeExercise();
+  };
+  const openExercise = (exercise: Exercise) => {
+    setSelected(exercise);
+    history.pushState({ fitnessExercise: exercise.id }, "");
+    window.scrollTo(0, 0);
+  };
   useEffect(() => {
     let live = true;
     let cleanup = () => {};
@@ -162,7 +124,8 @@ export function App() {
     }
   }
   const save: Save = async (action) => {
-    if (!context || busy || blocked) return false;
+    if (!context || busy || blocked || saving.current) return false;
+    saving.current = true;
     setBusy(true);
     setError("");
     setNotice("");
@@ -178,6 +141,7 @@ export function App() {
       haptic(false);
       return false;
     } finally {
+      saving.current = false;
       setBusy(false);
     }
   };
@@ -218,7 +182,7 @@ export function App() {
       ? data.weights.at(-1)!.value.kg - data.weights[0].value.kg
       : undefined;
   return (
-    <div className="app-shell">
+    <div className={`app-shell${selected ? " exercise-open" : ""}`}>
       <header className="topbar">
         <a
           className="brand"
@@ -276,361 +240,502 @@ export function App() {
         {!data && !error && <p role="status">Загружаем ваши данные…</p>}
         {data && n && (
           <>
-            {tab === "Сегодня" && (
+            {selected ? (
+              <ExerciseScreen
+                key={selected.id}
+                exercise={
+                  Object.values(data.plan)
+                    .flat()
+                    .find((e) => e.id === selected.id) ?? selected
+                }
+                day={day}
+                data={data}
+                save={save}
+                disabled={disabled}
+                back={back}
+                draft={
+                  drafts[selected.id] ?? {
+                    kg: "",
+                    reps: String(selected.repsMin ?? selected.reps),
+                    note: "",
+                    date: today(),
+                  }
+                }
+                changeDraft={(draft) =>
+                  setDrafts((old) => ({ ...old, [selected.id]: draft }))
+                }
+              />
+            ) : (
               <>
-                <section className="hero">
-                  <div>
-                    <p className="eyebrow">ПЛАН НА ДЕНЬ</p>
-                    <h2>
-                      Маленькие шаги.
-                      <br />
-                      Большие изменения.
-                    </h2>
-                    <p>
-                      Тренируйся, восстанавливайся и наблюдай за прогрессом.
-                    </p>
-                    <button onClick={() => setTab("Тренировки")}>
-                      Начать тренировку <span>↗</span>
-                    </button>
-                  </div>
-                  <div className="hero-art" aria-hidden="true">
-                    <div className="orbit" />
-                    <span>↑</span>
-                    <small>
-                      GROW
-                      <br />
-                      AT YOUR PACE
-                    </small>
-                  </div>
-                </section>
-                <div className="section-title">
-                  <h2>Твой ориентир питания</h2>
-                  <span className="badge">
-                    {data.profile.goal === "gain"
-                      ? "Набор массы"
-                      : "Поддержание"}
-                  </span>
-                </div>
-                <div className="nutrition-grid">
-                  <div className="calorie-card">
-                    <small>ЭНЕРГИЯ / ДЕНЬ</small>
-                    <strong>
-                      {n.calories.toLocaleString("ru-RU")}
-                      <span>ккал</span>
-                    </strong>
-                    <p>Оценочный TDEE: {Math.round(n.tdee)} ккал</p>
-                  </div>
-                  <div className="macro-card">
-                    <Macro
-                      name="Белки"
-                      amount={n.protein}
-                      className="protein"
-                    />
-                    <Macro name="Жиры" amount={n.fat} className="fat" />
-                    <Macro name="Углеводы" amount={n.carbs} className="carbs" />
-                  </div>
-                </div>
-                <p className="hint">
-                  Это стартовая оценка, а не точная потребность. Сверяйте её с
-                  динамикой веса за 2–3 недели. Частоту приёмов пищи выбирайте
-                  сами.
-                </p>
-                <div className="section-title">
-                  <h2>Тренировка по твоему плану</h2>
-                  <button
-                    className="text-button"
-                    onClick={() => setTab("Тренировки")}
-                  >
-                    Открыть →
-                  </button>
-                </div>
-                <div className="split-grid">
-                  {(["Push", "Pull", "Legs"] as Day[]).map((d, i) => (
-                    <button
-                      className="split-card"
-                      key={d}
-                      onClick={() => {
-                        setDay(d);
-                        setTab("Тренировки");
-                      }}
-                    >
-                      <small>
-                        0{i + 1} / {["ЖИМ", "ТЯГА", "НОГИ"][i]}
-                      </small>
-                      <strong>
-                        {d}
-                        <span>↗</span>
-                      </strong>
-                      <span>{data.plan[d].length} упражнения</span>
-                    </button>
-                  ))}
-                </div>
-                <section className="mini-stats">
-                  <div>
-                    <strong>{data.sessions.length}</strong>
-                    <span>тренировок записано</span>
-                  </div>
-                  <div>
-                    <strong>
-                      {data.weights.at(-1)?.value.kg ?? data.profile.weight}
-                      <small> кг</small>
-                    </strong>
-                    <span>последний вес</span>
-                  </div>
-                  <div>
-                    <strong>
-                      {weightChange === undefined
-                        ? "—"
-                        : `${weightChange > 0 ? "+" : ""}${weightChange.toFixed(1)}`}
-                      <small> кг</small>
-                    </strong>
-                    <span>изменение за историю</span>
-                  </div>
-                </section>
-              </>
-            )}
-            {tab === "Профиль" && (
-              <>
-                <section className="panel">
-                  <h2>Твои исходные данные</h2>
-                  <p className="hint">
-                    Стартовый профиль демонстрационный. Обновите анкету под
-                    себя. Калькулятор предназначен для взрослых.
-                  </p>
-                  <fieldset disabled={disabled}>
-                    <ProfileForm
-                      key={JSON.stringify(data.profile)}
-                      profile={data.profile}
-                      save={save}
-                    />
-                  </fieldset>
-                </section>
-                <section className="panel">
-                  <h2>Как считается ориентир</h2>
-                  <p>
-                    Миффлин—Сан Жеор: 10 × вес + 6,25 × рост − 5 × возраст +{" "}
-                    {data.profile.sex === "male" ? "5" : "(−161)"}.
-                  </p>
-                  <p>
-                    BMR: {Math.round(n.bmr)} ккал · TDEE: {Math.round(n.tdee)}{" "}
-                    ккал ·{" "}
-                    {data.profile.goal === "gain"
-                      ? `профицит ${data.profile.surplus} ккал`
-                      : "без профицита"}
-                    .
-                  </p>
-                  <p>
-                    Белки: {data.profile.proteinPerKg} г/кг. Жиры:{" "}
-                    {data.profile.fatPerKg} г/кг. Углеводы — оставшаяся энергия.
-                    Значения округлены.
-                  </p>
-                  <p className="hint">
-                    Активность учитывает весь день, а не только тренировки.
-                    Калории корректируйте постепенно по среднему весу и
-                    самочувствию.
-                  </p>
-                </section>
-                <section className="panel">
-                  <h2>Твои данные</h2>
-                  <p>
-                    {context?.mode === "telegram"
-                      ? "Хранятся в Telegram CloudStorage для вашего пользователя и этого бота."
-                      : "Хранятся отдельно в локальной демо-базе браузера."}{" "}
-                    Сохранение подтверждается Telegram. При ошибке сначала
-                    обновите данные.
-                  </p>
-                  <div className="button-row">
-                    <button disabled={busy} onClick={reload}>
-                      Обновить данные
-                    </button>
-                    <button disabled={busy} onClick={exportData}>
-                      Экспорт JSON
-                    </button>
-                  </div>
-                  <p className="hint">
-                    Без серверного обработчика нет автоответов бота и фоновых
-                    напоминаний. Menu button открывает приложение в любой
-                    момент.
-                  </p>
-                </section>
-              </>
-            )}
-            {tab === "Тренировки" && (
-              <>
-                <div className="segmented" aria-label="Тип тренировки">
-                  {(["Push", "Pull", "Legs"] as Day[]).map((d) => (
-                    <button
-                      key={d}
-                      aria-pressed={day === d}
-                      onClick={() => {
-                        setDay(d);
-                        setEditingPlan(false);
-                      }}
-                    >
-                      {d}
-                    </button>
-                  ))}
-                </div>
-                <div className="section-title">
-                  <h2>{day} / программа</h2>
-                  <button
-                    disabled={disabled}
-                    className="text-button"
-                    onClick={() => setEditingPlan(!editingPlan)}
-                  >
-                    {editingPlan ? "Закрыть редактор" : "Редактировать"}
-                  </button>
-                </div>
-                {editingPlan ? (
-                  <section className="panel">
-                    <fieldset disabled={disabled}>
-                      <PlanForm
-                        key={day}
-                        plan={data.plan}
-                        day={day}
-                        save={save}
-                        close={() => setEditingPlan(false)}
-                      />
-                    </fieldset>
-                  </section>
-                ) : (
-                  data.plan[day].map((e) => (
-                    <ExerciseCard key={e.id} exercise={e} />
-                  ))
-                )}
-                <section className="panel">
-                  <h2>Записать тренировку</h2>
-                  <p className="hint">
-                    Укажите фактический вес и повторы каждого подхода. 0 кг —
-                    упражнение без внешнего отягощения. Разминочные подходы
-                    можно не включать.
-                  </p>
-                  <fieldset disabled={disabled}>
-                    <SessionForm
-                      key={`${day}-${sessionVersion}-${JSON.stringify(data.plan[day])}`}
-                      plan={data.plan[day]}
-                      day={day}
-                      previous={data.sessions.map((s) => s.value)}
-                      save={save}
-                      saved={() => setSessionVersion((v) => v + 1)}
-                    />
-                  </fieldset>
-                </section>
-                <p className="hint">
-                  PPL — редактируемый шаблон. Чередуйте дни в удобном ритме,
-                  оставляя время на восстановление. Повышайте нагрузку при
-                  устойчивой технике.
-                </p>
-              </>
-            )}
-            {tab === "Прогресс" && (
-              <>
-                <section className="panel">
-                  <h2>Масса тела</h2>
-                  <p className="hint">
-                    Сравнивайте замеры в сходных условиях. Один замер на дату;
-                    повторное сохранение обновляет его. Вес в анкете меняется
-                    отдельно.
-                  </p>
-                  <fieldset disabled={disabled}>
-                    <WeightForm save={save} />
-                  </fieldset>
-                  <WeightChart weights={data.weights} />
-                </section>
-                <section className="mini-stats">
-                  <div>
-                    <strong>{data.sessions.length}</strong>
-                    <span>тренировок</span>
-                  </div>
-                  <div>
-                    <strong>
-                      {Math.round(
-                        data.sessions.reduce(
-                          (sum, s) => sum + volume(s.value),
-                          0,
-                        ),
-                      ).toLocaleString("ru-RU")}
-                    </strong>
-                    <span>объём, кг × повторы</span>
-                  </div>
-                  <div>
-                    <strong>{data.weights.length}</strong>
-                    <span>замеров массы</span>
-                  </div>
-                </section>
-                <section className="panel">
-                  <h2>История тренировок</h2>
-                  {data.sessions.length === 0 && (
-                    <p className="empty">
-                      Здесь появятся ваши тренировки. Первая — хороший старт.
-                    </p>
-                  )}
-                  {data.sessions.map((s) => (
-                    <details key={s.key} className="history">
-                      <summary>
-                        <strong>{s.value.day}</strong>
-                        <span>
-                          {dateText(s.value.date)} ·{" "}
-                          {volume(s.value).toLocaleString("ru-RU")} кг × повт.
-                        </span>
-                      </summary>
-                      {s.value.exercises.map((e, i) => (
-                        <p key={i}>
-                          <strong>{e.name}</strong>
+                {tab === "Сегодня" && (
+                  <>
+                    <section className="hero">
+                      <div>
+                        <p className="eyebrow">ПЛАН НА ДЕНЬ</p>
+                        <h2>
+                          Маленькие шаги.
                           <br />
-                          {e.sets
-                            .map((a, j) => `${j + 1}: ${a.kg} кг × ${a.reps}`)
-                            .join(" · ")}
+                          Большие изменения.
+                        </h2>
+                        <p>
+                          Тренируйся, восстанавливайся и наблюдай за прогрессом.
                         </p>
-                      ))}
-                      <button
-                        className="danger"
-                        disabled={disabled}
-                        onClick={() => {
-                          if (confirm("Удалить эту тренировку из истории?"))
-                            void save((r) => r.remove(s.key));
-                        }}
-                      >
-                        Удалить тренировку
-                      </button>
-                    </details>
-                  ))}
-                </section>
-                {data.weights.length > 0 && (
-                  <section className="panel">
-                    <h2>Замеры</h2>
-                    <div className="table-scroll">
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Дата</th>
-                            <th>Вес</th>
-                            <th>Действие</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {[...data.weights].reverse().map((w) => (
-                            <tr key={w.key}>
-                              <td>{dateText(w.value.date)}</td>
-                              <td>{w.value.kg} кг</td>
-                              <td>
-                                <button
-                                  className="text-button danger"
-                                  disabled={disabled}
-                                  onClick={() => {
-                                    if (confirm("Удалить этот замер?"))
-                                      void save((r) => r.remove(w.key));
-                                  }}
-                                >
-                                  Удалить
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                        <button
+                          onClick={() => {
+                            setDay(
+                              data.schedule?.[(new Date().getDay() + 6) % 7] ??
+                                day,
+                            );
+                            setTab("Тренировки");
+                          }}
+                        >
+                          Начать тренировку <span>↗</span>
+                        </button>
+                      </div>
+                      <div className="hero-art" aria-hidden="true">
+                        <div className="orbit" />
+                        <span>↑</span>
+                        <small>
+                          GROW
+                          <br />
+                          AT YOUR PACE
+                        </small>
+                      </div>
+                    </section>
+                    <div className="section-title">
+                      <h2>Твой ориентир питания</h2>
+                      <span className="badge">
+                        {data.profile.goal === "gain"
+                          ? "Набор массы"
+                          : "Поддержание"}
+                      </span>
                     </div>
-                  </section>
+                    <div className="nutrition-grid">
+                      <div className="calorie-card">
+                        <small>ЭНЕРГИЯ / ДЕНЬ</small>
+                        <strong>
+                          {n.calories.toLocaleString("ru-RU")}
+                          <span>ккал</span>
+                        </strong>
+                        <p>Оценочный TDEE: {Math.round(n.tdee)} ккал</p>
+                      </div>
+                      <div className="macro-card">
+                        <Macro
+                          name="Белки"
+                          amount={n.protein}
+                          className="protein"
+                        />
+                        <Macro name="Жиры" amount={n.fat} className="fat" />
+                        <Macro
+                          name="Углеводы"
+                          amount={n.carbs}
+                          className="carbs"
+                        />
+                      </div>
+                    </div>
+                    <p className="hint">
+                      Это стартовая оценка, а не точная потребность. Сверяйте её
+                      с динамикой веса за 2–3 недели. Частоту приёмов пищи
+                      выбирайте сами.
+                    </p>
+                    <div className="section-title">
+                      <h2>Тренировка по твоему плану</h2>
+                      <button
+                        className="text-button"
+                        onClick={() => setTab("Тренировки")}
+                      >
+                        Открыть →
+                      </button>
+                    </div>
+                    <div className="split-grid">
+                      {(["Push", "Pull", "Legs"] as Day[]).map((d, i) => (
+                        <button
+                          className="split-card"
+                          key={d}
+                          onClick={() => {
+                            setDay(d);
+                            setTab("Тренировки");
+                          }}
+                        >
+                          <small>
+                            0{i + 1} / {["ЖИМ", "ТЯГА", "НОГИ"][i]}
+                          </small>
+                          <strong>
+                            {d}
+                            <span>↗</span>
+                          </strong>
+                          <span>{data.plan[d].length} упражнений</span>
+                        </button>
+                      ))}
+                    </div>
+                    <section className="mini-stats">
+                      <div>
+                        <strong>
+                          {
+                            new Set(
+                              (data.journal ?? []).map((s) => s.workoutId),
+                            ).size
+                          }
+                        </strong>
+                        <span>тренировок записано</span>
+                      </div>
+                      <div>
+                        <strong>
+                          {data.weights.at(-1)?.value.kg ?? data.profile.weight}
+                          <small> кг</small>
+                        </strong>
+                        <span>последний вес</span>
+                      </div>
+                      <div>
+                        <strong>
+                          {weightChange === undefined
+                            ? "—"
+                            : `${weightChange > 0 ? "+" : ""}${weightChange.toFixed(1)}`}
+                          <small> кг</small>
+                        </strong>
+                        <span>изменение за историю</span>
+                      </div>
+                    </section>
+                  </>
+                )}
+                {tab === "Питание" && (
+                  <NutritionDiary
+                    data={data}
+                    save={save}
+                    disabled={busy || blocked}
+                  />
+                )}
+                {tab === "Профиль" && (
+                  <>
+                    <section className="panel">
+                      <h2>Твои исходные данные</h2>
+                      <p className="hint">
+                        Стартовый профиль демонстрационный. Обновите анкету под
+                        себя. Калькулятор предназначен для взрослых.
+                      </p>
+                      <fieldset disabled={disabled}>
+                        <ProfileForm
+                          key={JSON.stringify(data.profile)}
+                          profile={data.profile}
+                          save={save}
+                        />
+                      </fieldset>
+                    </section>
+                    <section className="panel">
+                      <h2>Как считается ориентир</h2>
+                      <p>
+                        Миффлин—Сан Жеор: 10 × вес + 6,25 × рост − 5 × возраст +{" "}
+                        {data.profile.sex === "male" ? "5" : "(−161)"}.
+                      </p>
+                      <p>
+                        BMR: {Math.round(n.bmr)} ккал · TDEE:{" "}
+                        {Math.round(n.tdee)} ккал ·{" "}
+                        {data.profile.goal === "gain"
+                          ? `профицит ${data.profile.surplus} ккал`
+                          : "без профицита"}
+                        .
+                      </p>
+                      <p>
+                        Белки: {data.profile.proteinPerKg} г/кг. Жиры:{" "}
+                        {data.profile.fatPerKg} г/кг. Углеводы — оставшаяся
+                        энергия. Значения округлены.
+                      </p>
+                      <p className="hint">
+                        Активность учитывает весь день, а не только тренировки.
+                        Калории корректируйте постепенно по среднему весу и
+                        самочувствию.
+                      </p>
+                    </section>
+                    <section className="panel">
+                      <h2>Твои данные</h2>
+                      <p>
+                        {context?.mode === "telegram"
+                          ? "Хранятся в Telegram CloudStorage для вашего пользователя и этого бота."
+                          : "Хранятся отдельно в локальной демо-базе браузера."}{" "}
+                        Сохранение подтверждается Telegram. При ошибке сначала
+                        обновите данные.
+                      </p>
+                      <div className="button-row">
+                        <button disabled={busy} onClick={reload}>
+                          Обновить данные
+                        </button>
+                        <button disabled={busy} onClick={exportData}>
+                          Экспорт JSON
+                        </button>
+                      </div>
+                      <p className="hint">
+                        Без серверного обработчика нет автоответов бота и
+                        фоновых напоминаний. Menu button открывает приложение в
+                        любой момент.
+                      </p>
+                    </section>
+                  </>
+                )}
+                {tab === "Тренировки" && (
+                  <>
+                    <div className="segmented" aria-label="Тип тренировки">
+                      {(["Push", "Pull", "Legs"] as Day[]).map((d) => (
+                        <button
+                          key={d}
+                          aria-pressed={day === d}
+                          onClick={() => {
+                            setDay(d);
+                            setEditingPlan(false);
+                          }}
+                        >
+                          {d}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="section-title">
+                      <h2>{day} / программа</h2>
+                      <button
+                        disabled={disabled}
+                        className="text-button"
+                        onClick={() => setEditingPlan(!editingPlan)}
+                      >
+                        {editingPlan ? "Закрыть редактор" : "Редактировать"}
+                      </button>
+                    </div>
+                    {editingPlan ? (
+                      <section className="panel">
+                        <fieldset disabled={disabled}>
+                          <PlanForm
+                            key={day}
+                            plan={data.plan}
+                            day={day}
+                            save={save}
+                            close={() => setEditingPlan(false)}
+                          />
+                        </fieldset>
+                      </section>
+                    ) : (
+                      <div className="exercise-list">
+                        {data.plan[day].map((e) => (
+                          <button
+                            className="exercise-tile"
+                            key={e.id}
+                            onClick={() => openExercise(e)}
+                          >
+                            <MuscleDiagram exercise={e} small />
+                            <span>
+                              <strong>{e.name}</strong>
+                              <span>
+                                {muscles[e.muscle]} · {ranges(e)}
+                              </span>
+                              <small>
+                                Сегодня:{" "}
+                                {
+                                  (data.journal ?? []).filter(
+                                    (s) =>
+                                      s.exerciseId === e.id &&
+                                      s.date === today(),
+                                  ).length
+                                }{" "}
+                                подходов
+                              </small>
+                            </span>
+                            <span aria-hidden="true">→</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <details className="panel">
+                      <summary>Каталог упражнений</summary>
+                      <p>
+                        Полный встроенный каталог: откройте карточку, чтобы
+                        увидеть технику, ошибки и историю. Пользовательская
+                        программа остаётся прежней.
+                      </p>
+                      {catalog[day].map((e) => (
+                        <button
+                          className="catalog-tile"
+                          key={e.id}
+                          onClick={() => openExercise(e)}
+                        >
+                          <MuscleDiagram exercise={e} small />
+                          <span>
+                            <strong>{e.name}</strong>
+                            <span>
+                              {muscles[e.muscle]} · {ranges(e)}
+                            </span>
+                          </span>
+                        </button>
+                      ))}
+                    </details>
+                    <ScheduleForm
+                      key={JSON.stringify(data.schedule)}
+                      schedule={data.schedule!}
+                      save={save}
+                      disabled={disabled}
+                    />
+                    {archivedExercises(data).length > 0 && (
+                      <section className="panel">
+                        <h2>Архив упражнений</h2>
+                        <p>
+                          Неоднозначные старые записи и упражнения, убранные из
+                          программы. История сохранена.
+                        </p>
+                        {archivedExercises(data).map((e) => (
+                          <button
+                            key={e.id}
+                            onClick={() => {
+                              setDay(e.day);
+                              openExercise(e);
+                            }}
+                          >
+                            {e.name} · {e.day}
+                          </button>
+                        ))}
+                      </section>
+                    )}
+                    <p className="hint">
+                      PPL — редактируемый шаблон. Чередуйте дни в удобном ритме,
+                      оставляя время на восстановление. Повышайте нагрузку при
+                      устойчивой технике.
+                    </p>
+                  </>
+                )}
+                {tab === "Прогресс" && (
+                  <>
+                    <section className="panel">
+                      <h2>Масса тела</h2>
+                      <p className="hint">
+                        Сравнивайте замеры в сходных условиях. Один замер на
+                        дату; повторное сохранение обновляет его. Вес в анкете
+                        меняется отдельно.
+                      </p>
+                      <fieldset disabled={disabled}>
+                        <WeightForm save={save} />
+                      </fieldset>
+                      <WeightChart weights={data.weights} />
+                    </section>
+                    <section className="mini-stats">
+                      <div>
+                        <strong>
+                          {
+                            new Set(
+                              (data.journal ?? []).map((s) => s.workoutId),
+                            ).size
+                          }
+                        </strong>
+                        <span>тренировок</span>
+                      </div>
+                      <div>
+                        <strong>
+                          {Math.round(
+                            analysis(data.journal ?? []).volume,
+                          ).toLocaleString("ru-RU")}
+                        </strong>
+                        <span>объём, кг × повторы</span>
+                      </div>
+                      <div>
+                        <strong>{data.weights.length}</strong>
+                        <span>замеров массы</span>
+                      </div>
+                    </section>
+                    <section className="panel">
+                      <h2>История тренировок</h2>
+                      {[
+                        ...new Set(
+                          (data.journal ?? []).map((s) => s.workoutId),
+                        ),
+                      ].map((id) => {
+                        const sets = (data.journal ?? []).filter(
+                          (s) => s.workoutId === id,
+                        );
+                        return (
+                          <details className="history" key={id}>
+                            <summary>
+                              <strong>{sets[0].day}</strong>
+                              <span>
+                                {dateText(sets[0].date)} ·{" "}
+                                {analysis(sets).volume} кг × повт.
+                              </span>
+                            </summary>
+                            {sets.map((s) => (
+                              <p key={s.id}>
+                                {s.name}: {s.kg} кг × {s.reps}
+                                {s.note ? ` · ${s.note}` : ""}
+                              </p>
+                            ))}
+                          </details>
+                        );
+                      })}
+                      {data.sessions.length > 0 && (
+                        <h3>Исходные тренировки v1 (архив)</h3>
+                      )}
+                      {(data.journal ?? []).length === 0 && (
+                        <p className="empty">
+                          Здесь появятся ваши тренировки. Первая — хороший
+                          старт.
+                        </p>
+                      )}
+                      {data.sessions.map((s) => (
+                        <details key={s.key} className="history">
+                          <summary>
+                            <strong>{s.value.day}</strong>
+                            <span>
+                              {dateText(s.value.date)} ·{" "}
+                              {volume(s.value).toLocaleString("ru-RU")} кг ×
+                              повт.
+                            </span>
+                          </summary>
+                          {s.value.exercises.map((e, i) => (
+                            <p key={i}>
+                              <strong>{e.name}</strong>
+                              <br />
+                              {e.sets
+                                .map(
+                                  (a, j) => `${j + 1}: ${a.kg} кг × ${a.reps}`,
+                                )
+                                .join(" · ")}
+                            </p>
+                          ))}
+                          <small>
+                            Исходная запись сохранена. Исправляйте отдельные
+                            подходы на экране упражнения.
+                          </small>
+                        </details>
+                      ))}
+                    </section>
+                    {data.weights.length > 0 && (
+                      <section className="panel">
+                        <h2>Замеры</h2>
+                        <div className="table-scroll">
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>Дата</th>
+                                <th>Вес</th>
+                                <th>Действие</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {[...data.weights].reverse().map((w) => (
+                                <tr key={w.key}>
+                                  <td>{dateText(w.value.date)}</td>
+                                  <td>{w.value.kg} кг</td>
+                                  <td>
+                                    <button
+                                      className="text-button danger"
+                                      disabled={disabled}
+                                      onClick={() => {
+                                        if (confirm("Удалить этот замер?"))
+                                          void save((r) => r.remove(w.key));
+                                      }}
+                                    >
+                                      Удалить
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </section>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -640,23 +745,27 @@ export function App() {
           Рост — это процесс. Дай себе время.
           <br />
           <small>Расчёты ориентировочные · данные под твоим контролем</small>
+          <br />
+          <small>Версия: {__BUILD_COMMIT__.slice(0, 12)}</small>
         </footer>
       </main>
-      <nav className="bottom-nav" aria-label="Главная навигация">
-        {tabs.map((t, i) => (
-          <button
-            key={t}
-            aria-current={tab === t ? "page" : undefined}
-            onClick={() => {
-              setTab(t);
-              setNotice("");
-            }}
-          >
-            <span aria-hidden="true">{icons[i]}</span>
-            {t}
-          </button>
-        ))}
-      </nav>
+      {!selected && (
+        <nav className="bottom-nav" aria-label="Главная навигация">
+          {tabs.map((t, i) => (
+            <button
+              key={t}
+              aria-current={tab === t ? "page" : undefined}
+              onClick={() => {
+                setTab(t);
+                setNotice("");
+              }}
+            >
+              <span aria-hidden="true">{icons[i]}</span>
+              {t}
+            </button>
+          ))}
+        </nav>
+      )}
     </div>
   );
 }
@@ -821,6 +930,7 @@ function PlanForm({
 }) {
   const [list, setList] = useState<Exercise[]>(structuredClone(plan[day]));
   const [error, setError] = useState("");
+  const [catalogId, setCatalogId] = useState("");
   const update = (i: number, patch: Partial<Exercise>) =>
     setList((old) => old.map((e, j) => (i === j ? { ...e, ...patch } : e)));
   async function submit(e: FormEvent) {
@@ -828,7 +938,16 @@ function PlanForm({
     setError("");
     try {
       const next = planSchema.parse({ ...plan, [day]: list });
-      if (await save((r) => r.save("fit_v1_plan", next, planSchema))) close();
+      const exercises = next[day].map((e) => {
+        const old = plan[day].find((p) => p.id === e.id);
+        return old && old.name !== e.name
+          ? {
+              ...e,
+              legacyNames: [...new Set([...(old.legacyNames ?? []), old.name])],
+            }
+          : e;
+      });
+      if (await save((r) => r.savePlan(day, exercises))) close();
     } catch (e) {
       setError(message(e));
     }
@@ -867,7 +986,12 @@ function PlanForm({
                 min={1}
                 max={8}
                 value={e.sets}
-                onChange={(v) => update(i, { sets: Number(v.target.value) })}
+                onChange={(v) =>
+                  update(i, {
+                    sets: Number(v.target.value),
+                    setsMin: undefined,
+                  })
+                }
               />
             </Field>
             <Field label="Повторы">
@@ -877,7 +1001,51 @@ function PlanForm({
                 min={1}
                 max={30}
                 value={e.reps}
-                onChange={(v) => update(i, { reps: Number(v.target.value) })}
+                onChange={(v) =>
+                  update(i, {
+                    reps: Number(v.target.value),
+                    repsMin: undefined,
+                  })
+                }
+              />
+            </Field>
+            <Field label="Минимум подходов (необязательно)">
+              <input
+                type="number"
+                min={1}
+                max={e.sets}
+                value={e.setsMin ?? ""}
+                onChange={(v) =>
+                  update(i, {
+                    setsMin: v.target.value
+                      ? Number(v.target.value)
+                      : undefined,
+                  })
+                }
+              />
+            </Field>
+            <Field label="Минимум повторов (необязательно)">
+              <input
+                type="number"
+                min={1}
+                max={e.reps}
+                value={e.repsMin ?? ""}
+                onChange={(v) =>
+                  update(i, {
+                    repsMin: v.target.value
+                      ? Number(v.target.value)
+                      : undefined,
+                  })
+                }
+              />
+            </Field>
+            <Field label="Комментарий к повторам">
+              <input
+                maxLength={80}
+                value={e.repNote ?? ""}
+                onChange={(v) =>
+                  update(i, { repNote: v.target.value || undefined })
+                }
               />
             </Field>
             <Field label="Подсказка">
@@ -898,6 +1066,43 @@ function PlanForm({
           </button>
         </div>
       ))}
+      <label className="field">
+        Добавить из каталога
+        <select
+          aria-label="Добавить из каталога"
+          value={catalogId}
+          onChange={(e) => setCatalogId(e.target.value)}
+        >
+          <option value="">Выберите упражнение</option>
+          {catalog[day]
+            .filter(
+              (e) =>
+                !list.some((p) => p.id === e.id) &&
+                !Object.values(plan)
+                  .flat()
+                  .some((p) => p.id === e.id && !plan[day].includes(p)),
+            )
+            .map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name}
+              </option>
+            ))}
+        </select>
+      </label>
+      <button
+        type="button"
+        disabled={!catalogId || list.length >= 8}
+        onClick={() => {
+          const e = catalog[day].find((e) => e.id === catalogId);
+          if (e) {
+            const { secondary, errors, aliases, media, ...exercise } = e;
+            setList((old) => [...old, exercise]);
+            setCatalogId("");
+          }
+        }}
+      >
+        Добавить выбранное упражнение
+      </button>
       <div className="button-row">
         <button
           type="button"
@@ -921,109 +1126,6 @@ function PlanForm({
         <button type="submit">Сохранить программу</button>
       </div>
       {error && <p role="alert">{error}</p>}
-    </form>
-  );
-}
-function SessionForm({
-  plan,
-  day,
-  previous,
-  save,
-  saved,
-}: {
-  plan: Exercise[];
-  day: Day;
-  previous: Session[];
-  save: Save;
-  saved: () => void;
-}) {
-  const [date, setDate] = useState(today());
-  const [error, setError] = useState("");
-  const [exercises, setExercises] = useState(() =>
-    plan.map((e) => {
-      const last = previous
-        .flatMap((s) => s.exercises)
-        .find((x) => x.name === e.name);
-      return {
-        name: e.name,
-        muscle: e.muscle,
-        sets: Array.from({ length: e.sets }, (_, i) => ({
-          kg: last?.sets[i]?.kg ?? 0,
-          reps: e.reps,
-        })),
-      };
-    }),
-  );
-  // Stable id lets a retry overwrite the same session if an earlier callback timed out.
-  const [key] = useState(() => `fit_v1_session_${crypto.randomUUID()}`);
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    setError("");
-    try {
-      const s = sessionSchema.parse({ date, day, exercises });
-      if (await save((r) => r.save(key, s, sessionSchema))) saved();
-    } catch (e) {
-      setError(message(e));
-    }
-  }
-  return (
-    <form onSubmit={submit}>
-      <Field label="Дата тренировки">
-        <input
-          required
-          type="date"
-          max={today()}
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-        />
-      </Field>
-      {exercises.map((e, i) => (
-        <div className="session-exercise" key={i}>
-          <h3>{e.name}</h3>
-          <div className="set-heading">
-            <span>Подход</span>
-            <span>Вес, кг</span>
-            <span>Повторы</span>
-          </div>
-          {e.sets.map((s, j) => (
-            <div className="set-row" key={j}>
-              <span>{String(j + 1).padStart(2, "0")}</span>
-              {(["kg", "reps"] as const).map((k) => (
-                <input
-                  key={k}
-                  aria-label={`${e.name}, подход ${j + 1}, ${k === "kg" ? "вес" : "повторы"}`}
-                  type="number"
-                  required
-                  min={k === "kg" ? 0 : 1}
-                  max={k === "kg" ? 500 : 100}
-                  step={k === "kg" ? 0.5 : 1}
-                  value={s[k]}
-                  onChange={(v) =>
-                    setExercises((old) =>
-                      old.map((x, a) =>
-                        a !== i
-                          ? x
-                          : {
-                              ...x,
-                              sets: x.sets.map((t, b) =>
-                                b !== j
-                                  ? t
-                                  : { ...t, [k]: Number(v.target.value) },
-                              ),
-                            },
-                      ),
-                    )
-                  }
-                />
-              ))}
-            </div>
-          ))}
-        </div>
-      ))}
-      {error && <p role="alert">{error}</p>}
-      <button type="submit" className="wide">
-        Сохранить тренировку ✓
-      </button>
     </form>
   );
 }
@@ -1119,5 +1221,65 @@ function WeightChart({ weights }: { weights: Data["weights"] }) {
         </text>
       </svg>
     </div>
+  );
+}
+
+function ScheduleForm({
+  schedule,
+  save,
+  disabled,
+}: {
+  schedule: (Day | null)[];
+  save: Save;
+  disabled: boolean;
+}) {
+  const [value, setValue] = useState(schedule);
+  return (
+    <details className="panel">
+      <summary>Расписание недели</summary>
+      <p>
+        Сегодня:{" "}
+        {schedule[(new Date().getDay() + 6) % 7] ?? "Отдых / лёгкая активность"}
+        . День программы можно выбрать вручную независимо от календаря.
+      </p>
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          await save((r) => r.save("fit_v2_schedule", value, scheduleSchema));
+        }}
+      >
+        <fieldset disabled={disabled}>
+          {[
+            "Понедельник",
+            "Вторник",
+            "Среда",
+            "Четверг",
+            "Пятница",
+            "Суббота",
+            "Воскресенье",
+          ].map((name, i) => (
+            <Field key={name} label={name}>
+              <select
+                aria-label={name}
+                value={value[i] ?? ""}
+                onChange={(e) =>
+                  setValue((old) =>
+                    old.map((v, j) =>
+                      i === j ? (e.target.value as Day) || null : v,
+                    ),
+                  )
+                }
+              >
+                <option value="">Отдых / лёгкая активность</option>
+                {["Push", "Pull", "Legs"].map((d) => (
+                  <option key={d}>{d}</option>
+                ))}
+              </select>
+            </Field>
+          ))}
+          <button type="submit">Сохранить расписание</button>
+        </fieldset>
+      </form>
+    </details>
   );
 }

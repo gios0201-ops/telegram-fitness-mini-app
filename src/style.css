@@ -717,21 +717,6 @@ th {
 [data-theme="light"] input[type="date"] {
   color-scheme: light;
 }
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme]) {
-    color-scheme: light;
-    --bg: #f6f7f3;
-    --card: #fff;
-    --text: #1b2820;
-    --muted: #627165;
-    --line: #14231920;
-    --accent: #416d28;
-    --on-accent: #fff;
-  }
-  :root:not([data-theme]) input[type="date"] {
-    color-scheme: light;
-  }
-}
 @media (max-width: 600px) {
   .app-shell {
     padding: 0 18px;
@@ -940,8 +925,154 @@ footer {
 [data-theme="light"] .danger {
   color: #a1342c;
 }
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme]) .danger {
-    color: #a1342c;
+
+.bottom-nav {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.bottom-nav button {
+  min-width: 0;
+  padding-inline: 2px;
+}
+input,
+select,
+textarea {
+  font-size: 16px;
+}
+.macro-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 20px 0;
+}
+.macro-grid > div {
+  display: grid;
+  gap: 5px;
+}
+.macro-grid strong {
+  font-size: 28px;
+}
+
+.exercise-list {
+  display: grid;
+  gap: 12px;
+}
+:is(.exercise-tile, .catalog-tile) {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  background: var(--card);
+  color: var(--text);
+  text-align: left;
+  border: 1px solid var(--line);
+  padding: 14px;
+}
+:is(.exercise-tile, .catalog-tile) > span:nth-child(2) {
+  display: grid;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+:is(.exercise-tile, .catalog-tile) strong {
+  overflow-wrap: anywhere;
+  font-size: 17px;
+  line-height: 1.4;
+}
+:is(.exercise-tile, .catalog-tile) small,
+:is(.exercise-tile, .catalog-tile) span > span {
+  color: var(--muted);
+  font-weight: 400;
+}
+.muscle-diagram {
+  display: block;
+  width: min(100%, 300px);
+  margin: 10px auto;
+}
+.muscle-diagram.small {
+  width: 64px;
+  flex-shrink: 0;
+  margin: 0;
+}
+.exercise-header h2 {
+  font-size: clamp(22px, 5vw, 32px);
+  overflow-wrap: anywhere;
+}
+.exercise-back {
+  position: sticky;
+  top: max(env(safe-area-inset-top, 0px), var(--tg-safe-area-inset-top, 0px));
+  z-index: 5;
+  margin-bottom: 16px;
+}
+.exercise-screen {
+  animation: exercise-enter 0.18s ease-out;
+  padding-bottom: max(20px, var(--tg-content-safe-area-inset-bottom, 0px));
+}
+.exercise-screen form {
+  margin-top: 16px;
+}
+.exercise-screen textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 12px;
+  font: inherit;
+  font-size: 16px;
+}
+.record-set {
+  width: 100%;
+  min-height: 56px;
+  margin-bottom: 10px;
+}
+.exercise-analysis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.exercise-analysis div {
+  min-width: 0;
+}
+.exercise-analysis dt {
+  color: var(--muted);
+  font-size: 14px;
+}
+.exercise-analysis dd {
+  margin: 6px 0;
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+.set-history {
+  border-top: 1px solid var(--line);
+  padding: 16px 0;
+  overflow-wrap: anywhere;
+}
+.set-history .button-row {
+  flex-wrap: wrap;
+}
+@keyframes exercise-enter {
+  from {
+    opacity: 0.5;
+    transform: translateY(8px);
   }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .exercise-screen {
+    animation: none;
+  }
+}
+.exercise-open .topbar,
+.exercise-open .page-heading {
+  display: none;
+}
+.exercise-open main {
+  padding-top: 16px;
+}
+.exercise-open .muscle-diagram:not(.small) {
+  max-width: 230px;
 }

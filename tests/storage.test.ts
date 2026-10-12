@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   Repository,
+  demoStore,
   callback,
   cloudStore,
   type Cloud,
@@ -142,4 +143,19 @@ describe("Хранилище", () => {
   it("таймаут честно указывает неизвестный результат записи", async () => {
     await expect(callback(() => {}, 5)).rejects.toThrow("неизвестен");
   });
+});
+
+it("демо адаптер перечисляет физические ключи и сохраняет данные после повторного открытия", async () => {
+  localStorage.clear();
+  const a = new Repository(demoStore(localStorage));
+  await a.save(
+    "fit_v1_profile",
+    { ...defaultProfile, weight: 85 },
+    profileSchema,
+  );
+  expect(
+    (await new Repository(demoStore(localStorage)).load()).profile.weight,
+  ).toBe(85);
+  expect(Object.keys(await a.exportRaw())).toEqual(["fit_v1_profile"]);
+  localStorage.clear();
 });

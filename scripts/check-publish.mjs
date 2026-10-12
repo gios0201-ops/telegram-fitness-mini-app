@@ -1,8 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 
-// Scan only files that can be published from Git, never local credentials or user storage.
-const files = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" })
+// Include new source files before staging; respect Git ignore rules.
+const files = execFileSync(
+  "git",
+  ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+  { encoding: "utf8" },
+)
   .split("\0")
   .filter(Boolean);
 if (!files.length)

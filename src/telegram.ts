@@ -2,11 +2,13 @@ import SDK from "@twa-dev/sdk";
 import { cloudStore, demoStore, Repository } from "./storage";
 // The SDK is CommonJS: Vite dev/build can expose its default export differently.
 const WebApp: typeof SDK =
-  (SDK as unknown as { default?: typeof SDK }).default ?? SDK;
+  (SDK as unknown as { default?: typeof SDK } | undefined)?.default ?? SDK;
 export function createRepository(): {
   repo: Repository;
   mode: "telegram" | "demo";
 } {
+  if (!WebApp)
+    throw new Error("Telegram SDK недоступен. Перезапустите приложение.");
   // Never use a user id from URL/initDataUnsafe as an authorization boundary.
   // Telegram itself isolates CloudStorage by the current user and bot.
   if (WebApp.initData || WebApp.platform !== "unknown") {
@@ -22,6 +24,7 @@ export function createRepository(): {
   return { repo: new Repository(demoStore(localStorage)), mode: "demo" };
 }
 export function initTelegram() {
+  if (!WebApp) throw new Error("Telegram SDK недоступен.");
   if (!WebApp.initData && WebApp.platform === "unknown") return () => {};
   const theme = () => {
     document.documentElement.dataset.theme = WebApp.colorScheme;
@@ -49,5 +52,24 @@ export function haptic(success = true) {
       WebApp.HapticFeedback.notificationOccurred(success ? "success" : "error");
   } catch {
     /* Optional device feature. */
+  }
+}
+
+export function telegramBack(back: () => void) {
+  try {
+    if (
+      !WebApp ||
+      WebApp.platform === "unknown" ||
+      !WebApp.isVersionAtLeast("6.1")
+    )
+      return () => {};
+    WebApp.BackButton.show();
+    WebApp.BackButton.onClick(back);
+    return () => {
+      WebApp.BackButton.offClick(back);
+      WebApp.BackButton.hide();
+    };
+  } catch {
+    return () => {};
   }
 }

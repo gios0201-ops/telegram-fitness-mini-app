@@ -52,14 +52,25 @@ export const muscleSchema = z.enum([
   "legs",
 ]);
 export type Muscle = z.infer<typeof muscleSchema>;
-export const exerciseSchema = z.object({
-  id: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),
-  name,
-  muscle: muscleSchema,
-  sets: number(1, 8).int(),
-  reps: number(1, 30).int(),
-  cue: z.string().max(180),
-});
+export const exerciseSchema = z
+  .object({
+    id: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),
+    name,
+    muscle: muscleSchema,
+    sets: number(1, 8).int(),
+    reps: number(1, 30).int(),
+    cue: z.string().max(180),
+    setsMin: number(1, 8).int().optional(),
+    repsMin: number(1, 30).int().optional(),
+    repNote: z.string().max(80).optional(),
+    legacyNames: z.array(name).max(20).optional(),
+  })
+  .refine(
+    (e) =>
+      (!e.setsMin || e.setsMin <= e.sets) &&
+      (!e.repsMin || e.repsMin <= e.reps),
+    "Минимум диапазона больше максимума",
+  );
 export type Exercise = z.infer<typeof exerciseSchema>;
 export const planSchema = z.object({
   Push: z.array(exerciseSchema).min(1).max(8),
@@ -190,6 +201,11 @@ export type Data = {
   plan: Plan;
   weights: Entry<Weight>[];
   sessions: Entry<Session>[];
+  foods?: Entry<FoodPage>[];
+  journal?: import("./journal").JournalSet[];
+  conflicts?: import("./journal").JournalConflict[];
+  schedule?: (Day | null)[];
+  savedPlan?: boolean;
 };
 export function today() {
   const d = new Date();
@@ -200,4 +216,35 @@ export function volume(s: Session) {
     (sum, e) => sum + e.sets.reduce((v, set) => v + set.kg * set.reps, 0),
     0,
   );
+}
+
+export const foodSchema = z
+  .object({
+    id: z.string().uuid(),
+    name: z.string().trim().min(1).max(70),
+    grams: number(0.1, 10000),
+    calories: number(0, 1000),
+    protein: number(0, 100),
+    fat: number(0, 100),
+    carbs: number(0, 100),
+  })
+  .refine(
+    (f) => f.protein + f.fat + f.carbs <= 100.1,
+    "Сумма БЖУ на 100 г не может превышать 100 г",
+  );
+export type Food = z.infer<typeof foodSchema>;
+export const foodPageSchema = z.object({
+  date: dateSchema,
+  foods: z.array(foodSchema).max(30),
+});
+export type FoodPage = z.infer<typeof foodPageSchema>;
+export function foodNutrition(input: Food) {
+  const f = foodSchema.parse(input);
+  const factor = f.grams / 100;
+  return {
+    calories: f.calories * factor,
+    protein: f.protein * factor,
+    fat: f.fat * factor,
+    carbs: f.carbs * factor,
+  };
 }
