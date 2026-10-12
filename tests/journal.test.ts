@@ -257,3 +257,92 @@ describe("Журнал подходов", () => {
     ).toBe(true);
   });
 });
+
+it("установка PPL сохраняет старый план, стабильные ID истории и замеры", async () => {
+  const store = memory();
+  await store.set("fit_v1_plan", JSON.stringify(initialPlan));
+  await store.set(
+    "fit_v1_session_old",
+    JSON.stringify({
+      date,
+      day: "Push",
+      exercises: [
+        { name: "Жим лёжа", muscle: "chest", sets: [{ kg: 80, reps: 8 }] },
+      ],
+    }),
+  );
+  await store.set("fit_v1_weight_old", JSON.stringify({ date, kg: 80 }));
+  const repo = new Repository(store);
+  const before = await repo.load();
+  await repo.installFullPlan(before.plan);
+  const after = await repo.load();
+  expect(Object.values(after.plan).map((d) => d.length)).toEqual([8, 8, 7]);
+  expect(after.journal).toEqual(before.journal);
+  expect(after.weights).toEqual(before.weights);
+  expect((await repo.exportRaw()).fit_v1_plan).toEqual(
+    JSON.stringify(initialPlan),
+  );
+  expect(after.legacyPlan).toEqual(initialPlan);
+  await repo.savePlan(
+    "Push",
+    after.plan.Push.map((e) => ({ ...e, name: e.name + "!" })),
+  );
+  expect((await repo.load()).journal).toEqual(before.journal);
+});
+it("ошибка при копировании не активирует частично записанный полный план", async () => {
+  const store = memory();
+  await store.set("fit_v1_plan", JSON.stringify(initialPlan));
+  const repo = new Repository(store);
+  const before = await repo.load();
+  const original = store.set;
+  let n = 0;
+  store.set = async (k, v) => {
+    if (++n === 4) throw new Error("offline");
+    await original(k, v);
+  };
+  await expect(repo.installFullPlan(before.plan)).rejects.toThrow("offline");
+  expect((await repo.load()).plan).toEqual(initialPlan);
+  expect((await repo.exportRaw()).fit_v3_active_plan).toBeUndefined();
+});
+it("устаревший предварительный просмотр не меняет программу", async () => {
+  const store = memory(),
+    repo = new Repository(store);
+  const before = await repo.load();
+  await repo.savePlan("Push", initialPlan.Push);
+  await expect(repo.installFullPlan(before.plan)).rejects.toThrow(
+    "после просмотра",
+  );
+  expect((await repo.load()).plan.Push).toEqual(initialPlan.Push);
+});
+it("повторная установка сохраняет текущую редакцию и исходную связь старых подходов", async () => {
+  const store = memory(),
+    repo = new Repository(store);
+  await store.set("fit_v1_plan", JSON.stringify(initialPlan));
+  const first = await repo.load();
+  await repo.installFullPlan(first.plan);
+  let d = await repo.load();
+  await repo.savePlan(
+    "Push",
+    d.plan.Push.map((e) => ({ ...e, name: e.name + " custom" })),
+  );
+  d = await repo.load();
+  await repo.installFullPlan(d.plan);
+  const raw = await repo.exportRaw(),
+    root = JSON.parse(raw.fit_v3_active_plan);
+  expect(JSON.parse(raw[root.previousDays.Push])).toEqual(d.plan.Push);
+  expect((await repo.load()).legacyPlan).toEqual(initialPlan);
+});
+it("неподтверждённая копия не активирует новую программу", async () => {
+  const store = memory(),
+    repo = new Repository(store);
+  await store.set("fit_v1_plan", JSON.stringify(initialPlan));
+  const before = await repo.load(),
+    original = store.set;
+  store.set = async (k, v) => {
+    if (!k.startsWith("fit_v3_plan_")) await original(k, v);
+  };
+  await expect(repo.installFullPlan(before.plan)).rejects.toThrow(
+    "подтвердить",
+  );
+  expect((await repo.load()).plan).toEqual(initialPlan);
+});

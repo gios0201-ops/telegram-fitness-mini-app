@@ -40,15 +40,23 @@ test("демо: профиль, PPL, рабочие веса, график и с
   await expect(page.getByRole("status")).toContainText("Сохранено");
   await page.getByRole("button", { name: "← Назад к программе" }).click();
   await nav(page, "Прогресс");
+  await page
+    .getByRole("button", { name: "Добавить замер", exact: true })
+    .click();
   await page.getByLabel("Дата замера").fill("2026-10-01");
   await page.getByLabel("Масса, кг").fill("80");
   await page.getByRole("button", { name: "Сохранить замер" }).click();
   await expect(page.getByRole("status")).toContainText("Сохранено");
+  await page
+    .getByRole("button", { name: "Добавить замер", exact: true })
+    .click();
   await page.getByLabel("Дата замера").fill("2026-10-08");
   await page.getByLabel("Масса, кг").fill("80.5");
   await page.getByRole("button", { name: "Сохранить замер" }).click();
   await expect(page.getByRole("img", { name: /График массы/ })).toBeVisible();
-  await expect(page.getByText("80.5 кг", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "80.5 кг", exact: true }),
+  ).toBeVisible();
   await page.locator("details.history summary").click();
   await expect(
     page.getByText("Жим тест: 60 кг × 8", { exact: false }),
@@ -220,6 +228,9 @@ test("Telegram: дневник питания сохраняет порцию в
 }) => {
   await telegram(page);
   await nav(page, "Питание");
+  await page
+    .getByRole("button", { name: "Добавить продукт", exact: true })
+    .click();
   await page.getByLabel("Название продукта").fill("Рис");
   await page.getByLabel("Масса порции, г").fill("200");
   await page.getByLabel("Ккал на 100 г").fill("130");
@@ -241,6 +252,9 @@ test("Telegram: ошибка записи питания сохраняет фо
 }) => {
   await telegram(page, true);
   await nav(page, "Питание");
+  await page
+    .getByRole("button", { name: "Добавить продукт", exact: true })
+    .click();
   await page.getByLabel("Название продукта").fill("Рис");
   await page.getByRole("button", { name: "Сохранить продукт" }).click();
   await expect(page.getByRole("alert")).toContainText("CloudStorage");

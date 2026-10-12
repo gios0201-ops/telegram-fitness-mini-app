@@ -311,3 +311,41 @@ export function defaultPlan(): Plan {
 export function ranges(e: Exercise) {
   return `${e.setsMin && e.setsMin !== e.sets ? `${e.setsMin}–` : ""}${e.sets} × ${e.repsMin && e.repsMin !== e.reps ? `${e.repsMin}–` : ""}${e.reps}${e.repNote ? ` (${e.repNote})` : ""}`;
 }
+
+export function exerciseGroup(day: Day, exercise: Exercise): string {
+  const groups: Record<string, string> = {
+    bench: "Грудь",
+    incline: "Грудь",
+    dips: "Грудь",
+    fly: "Грудь",
+    overhead: "Передняя и средняя дельта",
+    lateral: "Передняя и средняя дельта",
+    triceps: "Трицепс",
+    french: "Трицепс",
+    pullup: "Спина",
+    "barbell-row": "Спина",
+    pulldown: "Спина",
+    row: "Спина",
+    shrug: "Спина",
+    "barbell-curl": "Бицепс",
+    curl: "Бицепс",
+    "rear-delt": "Задняя дельта",
+    squat: "Квадрицепсы",
+    "leg-press": "Квадрицепсы",
+    extension: "Квадрицепсы",
+    rdl: "Задняя поверхность бедра и ягодицы",
+    "leg-curl": "Задняя поверхность бедра и ягодицы",
+    bridge: "Задняя поверхность бедра и ягодицы",
+    calf: "Икры",
+  };
+  return (
+    groups[exercise.id] ??
+    {
+      chest: "Грудь",
+      back: "Спина",
+      shoulders: "Плечи",
+      arms: day === "Push" ? "Трицепс" : "Бицепс",
+      legs: "Ноги / другие",
+    }[exercise.muscle]
+  );
+}

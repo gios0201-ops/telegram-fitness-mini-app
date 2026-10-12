@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   foodSchema,
   foodPageSchema,
@@ -8,6 +8,7 @@ import {
   type Data,
   type Food,
 } from "./domain";
+import { telegramBack } from "./telegram";
 import type { Repository } from "./storage";
 type Save = (action: (repo: Repository) => Promise<void>) => Promise<boolean>;
 const blank = (): Food => ({
@@ -28,6 +29,11 @@ export function NutritionDiary({
   save: Save;
   disabled: boolean;
 }) {
+  const [formOpen, setFormOpen] = useState(false);
+  useEffect(
+    () => (formOpen ? telegramBack(() => setFormOpen(false)) : undefined),
+    [formOpen],
+  );
   const [date, setDate] = useState(today());
   const [draft, setDraft] = useState<Food>(blank);
   const [error, setError] = useState("");
@@ -82,8 +88,10 @@ export function NutritionDiary({
             );
           await repo.save(key, { date, foods: updated }, foodPageSchema);
         })
-      )
+      ) {
         setDraft(blank());
+        setFormOpen(false);
+      }
     } finally {
       pending.current = false;
     }
@@ -113,130 +121,156 @@ export function NutritionDiary({
   }
   return (
     <>
-      <section className="panel">
-        <h2>Дневник питания</h2>
-        <p>
-          Вводите КБЖУ с этикетки на 100 г и массу съеденной порции. Каталог
-          продуктов и распознавание еды не подключены. Количество приёмов пищи
-          выбираете сами.
-        </p>
-        <label className="field">
-          Дата
-          <input
-            type="date"
-            value={date}
-            disabled={disabled}
-            onChange={(e) => {
-              setDate(e.target.value);
-              setDraft(blank());
-            }}
-            required
-          />
-        </label>
-        <div className="macro-grid">
-          {(
-            [
-              ["calories", "Ккал"],
-              ["protein", "Белки"],
-              ["fat", "Жиры"],
-              ["carbs", "Углеводы"],
-            ] as const
-          ).map(([key, label]) => (
-            <div key={key}>
-              <strong>{Math.round(total[key])}</strong>
-              <span>
-                {label} / {target[key]}
-              </span>
-              <small>Остаток: {Math.round(target[key] - total[key])}</small>
-            </div>
-          ))}
-        </div>
-        <p className="muted">
-          Цель калорийности — оценка. Отрицательный остаток означает превышение
-          выбранной цели.
-        </p>
-      </section>
-      <section className="panel">
-        <h2>
-          {foods.some((f) => f.id === draft.id)
-            ? "Редактировать продукт"
-            : "Добавить продукт"}
-        </h2>
-        <form onSubmit={submit}>
-          <fieldset disabled={disabled}>
-            <label className="field">
-              Название продукта
-              <input
-                value={draft.name}
-                maxLength={70}
-                required
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-              />
-            </label>
+      {!formOpen && (
+        <section className="panel">
+          <h2>Сегодня в рационе</h2>
+          <label className="field">
+            Дата
+            <input
+              type="date"
+              value={date}
+              disabled={disabled}
+              onChange={(e) => {
+                setDate(e.target.value);
+                setDraft(blank());
+              }}
+              required
+            />
+          </label>
+          <div className="nutrition-progress">
             {(
               [
-                ["grams", "Масса порции, г", 10000],
-                ["calories", "Ккал на 100 г", 1000],
-                ["protein", "Белки на 100 г", 100],
-                ["fat", "Жиры на 100 г", 100],
-                ["carbs", "Углеводы на 100 г", 100],
+                ["calories", "Ккал"],
+                ["protein", "Белки"],
+                ["fat", "Жиры"],
+                ["carbs", "Углеводы"],
               ] as const
-            ).map(([key, label, max]) => (
-              <label className="field" key={key}>
-                {label}
+            ).map(([key, label]) => (
+              <div key={key}>
+                <strong>{label}</strong>
+                <span>
+                  {Math.round(total[key])} / {target[key]}
+                </span>
+                <progress
+                  aria-label={label}
+                  value={Math.min(total[key], target[key])}
+                  max={target[key]}
+                />
+                <small>Остаток: {Math.round(target[key] - total[key])}</small>
+              </div>
+            ))}
+          </div>
+          <p className="muted">
+            Цель калорийности — оценка. Отрицательный остаток означает
+            превышение выбранной цели.
+          </p>
+          <button
+            className="primary"
+            disabled={disabled}
+            onClick={() => {
+              setDraft(blank());
+              setFormOpen(true);
+            }}
+          >
+            Добавить продукт
+          </button>
+        </section>
+      )}
+      {formOpen && (
+        <section className="panel food-form-screen">
+          <button onClick={() => setFormOpen(false)}>Назад к питанию</button>
+          <p className="hint">
+            КБЖУ с этикетки на 100 г; масса — съеденная порция.
+          </p>
+          <h2>
+            {foods.some((f) => f.id === draft.id)
+              ? "Редактировать продукт"
+              : "Добавить продукт"}
+          </h2>
+          <form onSubmit={submit}>
+            <fieldset disabled={disabled}>
+              <label className="field">
+                Название продукта
                 <input
-                  type="number"
-                  inputMode="decimal"
+                  value={draft.name}
+                  maxLength={70}
                   required
-                  min={key === "grams" ? 0.1 : 0}
-                  max={max}
-                  step="0.1"
-                  value={draft[key]}
-                  onChange={(e) =>
-                    setDraft({ ...draft, [key]: e.target.valueAsNumber })
-                  }
+                  onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                 />
               </label>
-            ))}
-            {error && <p role="alert">{error}</p>}
-            <button className="primary" type="submit">
-              Сохранить продукт
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setDraft(blank());
-                setError("");
-              }}
-            >
-              Очистить форму
-            </button>
-          </fieldset>
-        </form>
-      </section>
-      <section className="panel">
-        <h2>Продукты за день</h2>
-        {foods.length === 0 && <p>Записей пока нет.</p>}
-        {foods.map((f) => (
-          <article key={f.id}>
-            <h3>
-              {f.name} · {f.grams} г
-            </h3>
-            <p>
-              {Math.round(foodNutrition(f).calories)} ккал · Б{" "}
-              {foodNutrition(f).protein.toFixed(1)} · Ж{" "}
-              {foodNutrition(f).fat.toFixed(1)} · У{" "}
-              {foodNutrition(f).carbs.toFixed(1)}
-            </p>
-            <button disabled={disabled} onClick={() => setDraft({ ...f })}>
-              Изменить {f.name}
-            </button>
-            <button disabled={disabled} onClick={() => void remove(f)}>
-              Удалить {f.name}
-            </button>
-          </article>
-        ))}
-      </section>
+              {(
+                [
+                  ["grams", "Масса порции, г", 10000],
+                  ["calories", "Ккал на 100 г", 1000],
+                  ["protein", "Белки на 100 г", 100],
+                  ["fat", "Жиры на 100 г", 100],
+                  ["carbs", "Углеводы на 100 г", 100],
+                ] as const
+              ).map(([key, label, max]) => (
+                <label className="field" key={key}>
+                  {label}
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    required
+                    min={key === "grams" ? 0.1 : 0}
+                    max={max}
+                    step="0.1"
+                    value={draft[key]}
+                    onChange={(e) =>
+                      setDraft({ ...draft, [key]: e.target.valueAsNumber })
+                    }
+                  />
+                </label>
+              ))}
+              {error && <p role="alert">{error}</p>}
+              <button className="primary" type="submit">
+                Сохранить продукт
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDraft(blank());
+                  setError("");
+                }}
+              >
+                Очистить форму
+              </button>
+            </fieldset>
+          </form>
+        </section>
+      )}
+      {!formOpen && (
+        <section className="panel">
+          <h2>Продукты за день</h2>
+          {foods.length === 0 && <p>Записей пока нет.</p>}
+          {foods.map((f) => (
+            <article key={f.id}>
+              <h3>
+                {f.name} · {f.grams} г
+              </h3>
+              <p>
+                {Math.round(foodNutrition(f).calories)} ккал · Б{" "}
+                {foodNutrition(f).protein.toFixed(1)} · Ж{" "}
+                {foodNutrition(f).fat.toFixed(1)} · У{" "}
+                {foodNutrition(f).carbs.toFixed(1)}
+              </p>
+              <button
+                disabled={disabled}
+                onClick={() => {
+                  setDraft({ ...f });
+                  setFormOpen(true);
+                }}
+              >
+                Изменить {f.name}
+              </button>
+              <button disabled={disabled} onClick={() => void remove(f)}>
+                Удалить {f.name}
+              </button>
+            </article>
+          ))}
+        </section>
+      )}
     </>
   );
 }

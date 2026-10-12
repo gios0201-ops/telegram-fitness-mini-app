@@ -34,8 +34,6 @@ export function initTelegram() {
       "--card": p.secondary_bg_color,
       "--text": p.text_color,
       "--muted": p.hint_color,
-      "--accent": p.button_color,
-      "--on-accent": p.button_text_color,
     };
     for (const [k, v] of Object.entries(colors))
       if (v) document.documentElement.style.setProperty(k, v);

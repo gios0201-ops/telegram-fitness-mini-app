@@ -20,16 +20,44 @@ import {
   type Plan,
   type Profile,
 } from "./domain";
-import { createRepository, haptic, initTelegram } from "./telegram";
+import {
+  createRepository,
+  haptic,
+  initTelegram,
+  telegramBack,
+} from "./telegram";
 import { NutritionDiary } from "./NutritionDiary";
 import { ExerciseScreen, MuscleDiagram, type Draft } from "./ExerciseScreen";
-import { catalog, ranges } from "./catalog";
+import { catalog, ranges, defaultPlan, exerciseGroup } from "./catalog";
 import { archivedExercises, analysis, scheduleSchema } from "./journal";
 import { Repository } from "./storage";
 type Tab = "Сегодня" | "Тренировки" | "Прогресс" | "Профиль" | "Питание";
 type Save = (action: (repo: Repository) => Promise<void>) => Promise<boolean>;
 const tabs: Tab[] = ["Сегодня", "Тренировки", "Питание", "Прогресс", "Профиль"];
-const icons = ["◉", "↗", "◌", "▥", "◎"];
+const icons = [
+  "M3 10 12 3l9 7v11h-6v-7H9v7H3Z",
+  "M6 4v16M3 7v10M18 4v16M21 7v10M6 12h12",
+  "M5 3v7m3-7v7m-6-7v7h6M5 10v11M17 3v18m0-18c5 3 5 8 0 9",
+  "M3 20h18M5 16l5-6 4 3 6-9",
+  "M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0M4 21v-3a8 8 0 0 1 16 0v3",
+];
+function NavIcon({ index }: { index: number }) {
+  return (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={icons[index]} />
+    </svg>
+  );
+}
 const dateText = (d: string) =>
   new Date(d + "T12:00:00").toLocaleDateString("ru-RU", {
     day: "numeric",
@@ -58,6 +86,31 @@ export function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editingPlan, setEditingPlan] = useState(false);
+  const [previewPlan, setPreviewPlan] = useState<Plan>();
+  const [weightFormOpen, setWeightFormOpen] = useState(false);
+  const [period, setPeriod] = useState(30);
+  const [catalogQuery, setCatalogQuery] = useState("");
+  useEffect(
+    () =>
+      tab === "Прогресс" && weightFormOpen
+        ? telegramBack(() => setWeightFormOpen(false))
+        : undefined,
+    [tab, weightFormOpen],
+  );
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const initialHeight = viewport?.height ?? innerHeight;
+    const resize = () =>
+      document.body.classList.toggle(
+        "keyboard-open",
+        (viewport?.height ?? innerHeight) < initialHeight - 120,
+      );
+    viewport?.addEventListener("resize", resize);
+    return () => {
+      viewport?.removeEventListener("resize", resize);
+      document.body.classList.remove("keyboard-open");
+    };
+  }, []);
   const [selected, setSelected] = useState<Exercise>();
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const closeExercise = () => {
@@ -192,7 +245,10 @@ export function App() {
             setTab("Сегодня");
           }}
         >
-          <span className="brand-icon">↗</span>рост
+          <span className="brand-icon">
+            <NavIcon index={3} />
+          </span>
+          рост
           <span className="brand-dot">.</span>
         </a>
         <span className="tag">FITNESS / MINI APP</span>
@@ -207,7 +263,13 @@ export function App() {
         <div className="page-heading">
           <div>
             <p className="eyebrow">ТВОЙ РИТМ. ТВОЙ ПРОГРЕСС.</p>
-            <h1>{tab === "Сегодня" ? "Становись сильнее" : tab}</h1>
+            <h1>
+              {tab === "Сегодня"
+                ? "Становись сильнее"
+                : tab === "Тренировки"
+                  ? "Мой тренировочный план"
+                  : tab}
+            </h1>
           </div>
           <span className="date-chip">
             {new Date().toLocaleDateString("ru-RU", {
@@ -273,9 +335,8 @@ export function App() {
                       <div>
                         <p className="eyebrow">ПЛАН НА ДЕНЬ</p>
                         <h2>
-                          Маленькие шаги.
+                          Твой следующий шаг.
                           <br />
-                          Большие изменения.
                         </h2>
                         <p>
                           Тренируйся, восстанавливайся и наблюдай за прогрессом.
@@ -488,7 +549,7 @@ export function App() {
                       ))}
                     </div>
                     <div className="section-title">
-                      <h2>{day} / программа</h2>
+                      <h2>{data.plan[day].length} упражнений</h2>
                       <button
                         disabled={disabled}
                         className="text-button"
@@ -511,9 +572,117 @@ export function App() {
                       </section>
                     ) : (
                       <div className="exercise-list">
-                        {data.plan[day].map((e) => (
+                        {[
+                          ...new Set(
+                            data.plan[day].map((e) => exerciseGroup(day, e)),
+                          ),
+                        ].map((group) => (
+                          <section className="muscle-group" key={group}>
+                            <h3>{group}</h3>
+                            {data.plan[day]
+                              .filter((e) => exerciseGroup(day, e) === group)
+                              .map((e) => (
+                                <button
+                                  className="exercise-tile"
+                                  key={e.id}
+                                  onClick={() => openExercise(e)}
+                                >
+                                  <MuscleDiagram exercise={e} small />
+                                  <span>
+                                    <strong>{e.name}</strong>
+                                    <span>
+                                      {group} · {ranges(e)}
+                                    </span>
+                                    <small>
+                                      Сегодня:{" "}
+                                      {
+                                        (data.journal ?? []).filter(
+                                          (s) =>
+                                            s.exerciseId === e.id &&
+                                            s.date === today(),
+                                        ).length
+                                      }{" "}
+                                      подходов
+                                    </small>
+                                  </span>
+                                  <span aria-hidden="true">›</span>
+                                </button>
+                              ))}
+                          </section>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      className="install-plan"
+                      disabled={disabled}
+                      onClick={() => setPreviewPlan(structuredClone(data.plan))}
+                    >
+                      Установить полный PPL-план
+                    </button>
+                    {previewPlan && (
+                      <section
+                        className="panel plan-preview"
+                        aria-label="Предварительный просмотр PPL"
+                      >
+                        <h2>Полный PPL · 23 упражнения</h2>
+                        <p>
+                          Старая программа сохранится в резервной копии. История
+                          подходов, питание и замеры останутся.
+                        </p>
+                        {(["Push", "Pull", "Legs"] as const).map((d) => (
+                          <details key={d} open>
+                            <summary>
+                              {d.toUpperCase()} · {defaultPlan()[d].length}{" "}
+                              упражнений
+                            </summary>
+                            {defaultPlan()[d].map((e) => (
+                              <p key={e.id}>
+                                <strong>{e.name}</strong>
+                                <br />
+                                {exerciseGroup(d, e)} · {ranges(e)}
+                              </p>
+                            ))}
+                          </details>
+                        ))}
+                        <button
+                          className="primary"
+                          disabled={disabled}
+                          onClick={async () => {
+                            if (
+                              await save((r) => r.installFullPlan(previewPlan))
+                            )
+                              setPreviewPlan(undefined);
+                          }}
+                        >
+                          Подтвердить установку полного плана
+                        </button>
+                        <button
+                          disabled={disabled}
+                          onClick={() => setPreviewPlan(undefined)}
+                        >
+                          Отмена установки
+                        </button>
+                      </section>
+                    )}
+                    <details className="panel">
+                      <summary>Каталог упражнений</summary>
+                      <label className="field">
+                        Поиск упражнения
+                        <input
+                          type="search"
+                          value={catalogQuery}
+                          onChange={(e) => setCatalogQuery(e.target.value)}
+                        />
+                      </label>
+                      {catalog[day]
+                        .filter((e) =>
+                          e.name
+                            .toLowerCase()
+                            .includes(catalogQuery.toLowerCase()),
+                        )
+                        .map((e) => (
                           <button
-                            className="exercise-tile"
+                            className="catalog-tile"
                             key={e.id}
                             onClick={() => openExercise(e)}
                           >
@@ -523,45 +692,9 @@ export function App() {
                               <span>
                                 {muscles[e.muscle]} · {ranges(e)}
                               </span>
-                              <small>
-                                Сегодня:{" "}
-                                {
-                                  (data.journal ?? []).filter(
-                                    (s) =>
-                                      s.exerciseId === e.id &&
-                                      s.date === today(),
-                                  ).length
-                                }{" "}
-                                подходов
-                              </small>
                             </span>
-                            <span aria-hidden="true">→</span>
                           </button>
                         ))}
-                      </div>
-                    )}
-                    <details className="panel">
-                      <summary>Каталог упражнений</summary>
-                      <p>
-                        Полный встроенный каталог: откройте карточку, чтобы
-                        увидеть технику, ошибки и историю. Пользовательская
-                        программа остаётся прежней.
-                      </p>
-                      {catalog[day].map((e) => (
-                        <button
-                          className="catalog-tile"
-                          key={e.id}
-                          onClick={() => openExercise(e)}
-                        >
-                          <MuscleDiagram exercise={e} small />
-                          <span>
-                            <strong>{e.name}</strong>
-                            <span>
-                              {muscles[e.muscle]} · {ranges(e)}
-                            </span>
-                          </span>
-                        </button>
-                      ))}
                     </details>
                     <ScheduleForm
                       key={JSON.stringify(data.schedule)}
@@ -599,16 +732,75 @@ export function App() {
                 {tab === "Прогресс" && (
                   <>
                     <section className="panel">
-                      <h2>Масса тела</h2>
-                      <p className="hint">
-                        Сравнивайте замеры в сходных условиях. Один замер на
-                        дату; повторное сохранение обновляет его. Вес в анкете
-                        меняется отдельно.
-                      </p>
-                      <fieldset disabled={disabled}>
-                        <WeightForm save={save} />
-                      </fieldset>
-                      <WeightChart weights={data.weights} />
+                      {weightFormOpen ? (
+                        <>
+                          <button onClick={() => setWeightFormOpen(false)}>
+                            Назад к прогрессу
+                          </button>
+                          <h2>Новый замер</h2>
+                          <fieldset disabled={disabled}>
+                            <WeightForm
+                              save={save}
+                              onSaved={() => setWeightFormOpen(false)}
+                            />
+                          </fieldset>
+                        </>
+                      ) : (
+                        <>
+                          <div className="section-title">
+                            <h2>Масса тела</h2>
+                            <select
+                              aria-label="Период прогресса"
+                              value={period}
+                              onChange={(e) =>
+                                setPeriod(Number(e.target.value))
+                              }
+                            >
+                              <option value={7}>7 дней</option>
+                              <option value={30}>30 дней</option>
+                              <option value={90}>90 дней</option>
+                              <option value={99999}>Всё время</option>
+                            </select>
+                          </div>
+                          <div className="weight-summary">
+                            <strong>
+                              {data.weights.at(-1)?.value.kg ?? "—"}{" "}
+                              <small>кг</small>
+                            </strong>
+                            <span>
+                              {(() => {
+                                const cutoff = new Date();
+                                cutoff.setDate(cutoff.getDate() - period);
+                                const list = data.weights.filter(
+                                  (w) =>
+                                    w.value.date >=
+                                    cutoff.toISOString().slice(0, 10),
+                                );
+                                return list.length > 1
+                                  ? `${(list.at(-1)!.value.kg - list[0].value.kg).toFixed(1)} кг за период`
+                                  : "Недостаточно замеров для сравнения";
+                              })()}
+                            </span>
+                          </div>
+                          <WeightChart
+                            weights={data.weights.filter((w) => {
+                              const cutoff = new Date();
+                              cutoff.setDate(cutoff.getDate() - period);
+                              return (
+                                w.value.date >=
+                                cutoff.toISOString().slice(0, 10)
+                              );
+                            })}
+                          />
+                          <button
+                            className="primary"
+                            disabled={disabled}
+                            onClick={() => setWeightFormOpen(true)}
+                          >
+                            Добавить замер
+                          </button>
+                        </>
+                      )}
                     </section>
                     <section className="mini-stats">
                       <div>
@@ -742,8 +934,6 @@ export function App() {
           </>
         )}
         <footer>
-          Рост — это процесс. Дай себе время.
-          <br />
           <small>Расчёты ориентировочные · данные под твоим контролем</small>
           <br />
           <small>Версия: {__BUILD_COMMIT__.slice(0, 12)}</small>
@@ -760,7 +950,7 @@ export function App() {
                 setNotice("");
               }}
             >
-              <span aria-hidden="true">{icons[i]}</span>
+              <NavIcon index={i} />
               {t}
             </button>
           ))}
@@ -1129,7 +1319,7 @@ function PlanForm({
     </form>
   );
 }
-function WeightForm({ save }: { save: Save }) {
+function WeightForm({ save, onSaved }: { save: Save; onSaved: () => void }) {
   const [date, setDate] = useState(today());
   const [kg, setKg] = useState("");
   const [error, setError] = useState("");
@@ -1138,8 +1328,10 @@ function WeightForm({ save }: { save: Save }) {
     setError("");
     try {
       const w = weightSchema.parse({ date, kg: Number(kg) });
-      if (await save((r) => r.save(`fit_v1_weight_${date}`, w, weightSchema)))
+      if (await save((r) => r.save(`fit_v1_weight_${date}`, w, weightSchema))) {
         setKg("");
+        onSaved();
+      }
     } catch (e) {
       setError(message(e));
     }

@@ -9,6 +9,9 @@ test("питание: порция, редактирование, повторн
       .getByRole("button", { name: "Питание", exact: true })
       .click();
   await open();
+  await page
+    .getByRole("button", { name: "Добавить продукт", exact: true })
+    .click();
   await page.getByLabel("Название продукта").fill("Овсянка");
   await page.getByLabel("Масса порции, г").fill("150");
   await page.getByLabel("Ккал на 100 г").fill("370");
@@ -20,6 +23,12 @@ test("питание: порция, редактирование, повторн
   await expect(
     page.getByText("555 ккал · Б 19.5 · Ж 10.5 · У 90.0"),
   ).toBeVisible();
+  await expect(
+    page.getByRole("progressbar", { name: "Ккал", exact: true }),
+  ).toHaveAttribute("value", "555");
+  await expect(
+    page.getByRole("progressbar", { name: "Ккал", exact: true }),
+  ).toHaveAttribute("max", "3250");
   await page.reload();
   await open();
   await page.getByRole("button", { name: "Изменить Овсянка" }).click();

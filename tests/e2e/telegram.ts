@@ -4,6 +4,7 @@ export async function telegram(
   page: Page,
   failSave = false,
   seed: Record<string, string> = {},
+  platform = "android",
 ) {
   await page.addInitScript(
     ({ failSave, seed }) => {
@@ -55,7 +56,7 @@ export async function telegram(
     { failSave, seed },
   );
   await page.goto(
-    "./#tgWebAppVersion=8.0&tgWebAppPlatform=android&tgWebAppData=" +
+    `./#tgWebAppVersion=8.0&tgWebAppPlatform=${platform}&tgWebAppData=` +
       encodeURIComponent(
         "user=" +
           encodeURIComponent('{"id":123,"first_name":"Тест"}') +

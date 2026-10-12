@@ -115,7 +115,9 @@ import {
 } from "./journal";
 const prefix = "fit_v1_";
 const owned = (key: string) =>
-  key.startsWith(prefix) || key.startsWith("fit_v2_");
+  key.startsWith(prefix) ||
+  key.startsWith("fit_v2_") ||
+  key.startsWith("fit_v3_");
 const dayPlanSchema = schema
   .array(exerciseSchema)
   .min(1)
@@ -124,7 +126,26 @@ const dayPlanSchema = schema
     (list) => new Set(list.map((e) => e.id)).size === list.length,
     "Повторный ID упражнения",
   );
+const planManifestSchema = schema.object({
+  id: schema.uuid(),
+  days: schema.object({
+    Push: schema.string(),
+    Pull: schema.string(),
+    Legs: schema.string(),
+  }),
+  previousDays: schema.object({
+    Push: schema.string(),
+    Pull: schema.string(),
+    Legs: schema.string(),
+  }),
+  legacyDays: schema.object({
+    Push: schema.string(),
+    Pull: schema.string(),
+    Legs: schema.string(),
+  }),
+});
 export class Repository {
+  private active?: schema.infer<typeof planManifestSchema>;
   private writer = crypto.randomUUID();
   private snapshot: Record<string, string> = {};
   private pending = false;
@@ -143,6 +164,8 @@ export class Repository {
       weights: [],
       foods: [],
     };
+    let manifest: schema.infer<typeof planManifestSchema> | undefined;
+    const planPages: Record<string, Exercise[]> = {};
     const events: JournalEvent[] = [];
     const days: Partial<Record<Day, Exercise[]>> = {};
     for (const key of keys) {
@@ -152,7 +175,16 @@ export class Repository {
         );
       try {
         const v = JSON.parse(all[key]);
-        if (key === prefix + "profile") data.profile = profileSchema.parse(v);
+        if (key === "fit_v3_active_plan")
+          manifest = planManifestSchema.parse(v);
+        else if (
+          /^fit_v3_plan_[a-f0-9-]+_(?:(?:before|legacy)_)?(?:Push|Pull|Legs)$/.test(
+            key,
+          )
+        )
+          planPages[key] = dayPlanSchema.parse(v);
+        else if (key === prefix + "profile")
+          data.profile = profileSchema.parse(v);
         else if (key === prefix + "plan") {
           data.plan = planSchema.parse(v);
           data.savedPlan = true;
@@ -178,6 +210,25 @@ export class Repository {
       }
     }
     Object.assign(data.plan, days);
+    if (manifest) {
+      data.legacyPlan = structuredClone(data.plan);
+      for (const day of ["Push", "Pull", "Legs"] as const) {
+        for (const refs of [
+          manifest.days,
+          manifest.previousDays,
+          manifest.legacyDays,
+        ])
+          if (!planPages[refs[day]])
+            throw new Error(
+              "Не удалось прочитать сохранённую программу. Обновите данные.",
+            );
+        data.plan[day] = planPages[manifest.days[day]];
+        data.legacyPlan[day] = planPages[manifest.legacyDays[day]];
+      }
+      data.activePlanId = manifest.id;
+      data.savedPlan = true;
+    }
+    this.active = manifest;
     const ids = Object.values(data.plan)
       .flat()
       .map((e) => e.id);
@@ -201,7 +252,7 @@ export class Repository {
     return data;
   }
   async save<T>(key: string, value: T, schema: z.ZodType<T>) {
-    if (!/^fit_v[12]_[A-Za-z0-9_-]+$/.test(key) || key.length > 128)
+    if (!/^fit_v[123]_[A-Za-z0-9_-]+$/.test(key) || key.length > 128)
       throw new Error("Недопустимый ключ.");
     const json = JSON.stringify(schema.parse(value));
     // Conservative UTF-16 length: never exceed Telegram's 4096-character cap.
@@ -241,7 +292,63 @@ export class Repository {
     delete this.snapshot[key];
   }
   async savePlan(day: Day, exercises: Exercise[]) {
-    await this.save(`fit_v2_plan_${day}`, exercises, dayPlanSchema);
+    if (
+      ((await this.store.get(["fit_v3_active_plan"]))["fit_v3_active_plan"] ||
+        "") !== (this.snapshot.fit_v3_active_plan || "")
+    )
+      throw new Error(
+        "Программа изменена на другом устройстве. Обновите данные.",
+      );
+    await this.save(
+      this.active?.days[day] ?? `fit_v2_plan_${day}`,
+      exercises,
+      dayPlanSchema,
+    );
+  }
+  async installFullPlan(expected: Data["plan"]) {
+    const current = await this.load();
+    if (JSON.stringify(current.plan) !== JSON.stringify(expected))
+      throw new Error("Программа изменилась после просмотра. Обновите данные.");
+    const before = { ...this.snapshot };
+    if ((await this.store.keys()).length + 10 > 900)
+      throw new Error(
+        "Недостаточно свободных ключей для резервной копии программы.",
+      );
+    const id = crypto.randomUUID();
+    const manifest = {
+      id,
+      days: {} as Record<Day, string>,
+      previousDays: {} as Record<Day, string>,
+      legacyDays: {} as Record<Day, string>,
+    };
+    const next = defaultPlan();
+    for (const day of ["Push", "Pull", "Legs"] as const) {
+      manifest.days[day] = `fit_v3_plan_${id}_${day}`;
+      manifest.previousDays[day] = `fit_v3_plan_${id}_before_${day}`;
+      manifest.legacyDays[day] = `fit_v3_plan_${id}_legacy_${day}`;
+      for (const [key, list] of [
+        [manifest.days[day], next[day]],
+        [manifest.previousDays[day], current.plan[day]],
+        [manifest.legacyDays[day], (current.legacyPlan ?? current.plan)[day]],
+      ] as const)
+        await this.save(key, list, dayPlanSchema);
+    }
+    const guards = [
+      "fit_v3_active_plan",
+      "fit_v1_plan",
+      "fit_v2_plan_Push",
+      "fit_v2_plan_Pull",
+      "fit_v2_plan_Legs",
+      ...Object.values(this.active?.days ?? {}),
+    ];
+    const fresh = await this.store.get(guards);
+    if (guards.some((key) => (fresh[key] || "") !== (before[key] || "")))
+      throw new Error(
+        "Программа изменилась на другом устройстве. Полный план не активирован.",
+      );
+    await this.save("fit_v3_active_plan", manifest, planManifestSchema);
+    if ((await this.load()).activePlanId !== id)
+      throw new Error("Не удалось подтвердить установку программы.");
   }
   async appendEvent(date: string, input: JournalEvent) {
     if (this.pending) throw new Error("Дождитесь завершения записи.");

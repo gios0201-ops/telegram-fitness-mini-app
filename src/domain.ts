@@ -197,6 +197,8 @@ export const sessionSchema = z.object({
 export type Session = z.infer<typeof sessionSchema>;
 export type Entry<T> = { key: string; value: T };
 export type Data = {
+  legacyPlan?: Plan;
+  activePlanId?: string;
   profile: Profile;
   plan: Plan;
   weights: Entry<Weight>[];

@@ -65,7 +65,9 @@ export type JournalConflict = {
 export function legacySets(data: Data): JournalSet[] {
   return data.sessions.flatMap((session) =>
     session.value.exercises.flatMap((e, i) => {
-      const candidates = data.plan[session.value.day].filter(
+      const candidates = (data.legacyPlan ?? data.plan)[
+        session.value.day
+      ].filter(
         (p) =>
           p.name === e.name ||
           p.legacyNames?.includes(e.name) ||

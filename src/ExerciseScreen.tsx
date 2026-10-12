@@ -8,7 +8,7 @@ import {
   type JournalSet,
   type SetValue,
 } from "./journal";
-import { catalogById, ranges } from "./catalog";
+import { catalogById, exerciseGroup, ranges } from "./catalog";
 import type { Repository } from "./storage";
 import { telegramBack } from "./telegram";
 export type Save = (
@@ -194,7 +194,7 @@ export function ExerciseScreen({
       </button>
       <section className="panel exercise-header">
         <p className="eyebrow">
-          {day} · {muscles[exercise.muscle]}
+          {day} · {exerciseGroup(day, exercise)}
         </p>
         <h2>{exercise.name}</h2>
         <p>План: {ranges(exercise)}</p>
