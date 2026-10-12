@@ -1,0 +1,43 @@
+name: One-time Telegram configuration
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Изменить команду и menu button (false = dry-run)"
+        type: boolean
+        default: false
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: configure-telegram-bot
+  cancel-in-progress: false
+jobs:
+  configure:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    environment: telegram-setup
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Dry run without token
+        if: ${{ !inputs.apply }}
+        env:
+          MINI_APP_URL: ${{ vars.MINI_APP_URL }}
+        run: node scripts/setup-bot.mjs --dry-run
+      - name: Apply explicit configuration
+        if: ${{ inputs.apply }}
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          EXPECTED_BOT_ID: ${{ vars.EXPECTED_BOT_ID }}
+          MINI_APP_URL: ${{ vars.MINI_APP_URL }}
+        run: node scripts/setup-bot.mjs --apply
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && inputs.apply }}
+        with:
+          name: previous-bot-settings
+          path: bot-backups/
+          retention-days: 7
+          if-no-files-found: ignore
