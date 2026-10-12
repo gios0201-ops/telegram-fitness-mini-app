@@ -1,5 +1,7 @@
 # Рост · Telegram Fitness Mini App
 
+[Открыть тестовую версию](https://gios0201-ops.github.io/telegram-fitness-mini-app/) · [GitHub](https://github.com/gios0201-ops/telegram-fitness-mini-app) · [Отчёт публикации](docs/publication.md)
+
 Статическое приложение для набора мышечной массы: React + TypeScript + Vite, Telegram Mini Apps SDK (`@twa-dev/sdk`), Telegram CloudStorage и GitHub Pages. Работает без VPS, Docker, платного сервера и постоянно включённого компьютера. Компьютер нужен только для разработки или одноразовой настройки бота.
 
 ## Что реализовано
